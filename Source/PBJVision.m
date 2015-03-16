@@ -63,6 +63,7 @@ NSString * const PBJVisionPhotoMetadataKey = @"PBJVisionPhotoMetadataKey";
 NSString * const PBJVisionPhotoJPEGKey = @"PBJVisionPhotoJPEGKey";
 NSString * const PBJVisionPhotoImageKey = @"PBJVisionPhotoImageKey";
 NSString * const PBJVisionPhotoThumbnailKey = @"PBJVisionPhotoThumbnailKey";
+NSString * const PBJVisionPhotoApproximateCaptureTimeKey = @"PBJVisionPhotoApproximateCaptureTimeKey";
 
 // video dictionary key definitions
 
@@ -70,6 +71,7 @@ NSString * const PBJVisionVideoPathKey = @"PBJVisionVideoPathKey";
 NSString * const PBJVisionVideoThumbnailKey = @"PBJVisionVideoThumbnailKey";
 NSString * const PBJVisionVideoThumbnailArrayKey = @"PBJVisionVideoThumbnailArrayKey";
 NSString * const PBJVisionVideoCapturedDurationKey = @"PBJVisionVideoCapturedDurationKey";
+
 
 // PBJGLProgram shader uniforms for pixel format conversion on the GPU
 typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
@@ -349,26 +351,32 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
     
     DLog(@"change device (%d) mode (%d) format (%d)", changeDevice, changeMode, changeOutputFormat);
     
-    if (!changeMode && !changeDevice && !changeOutputFormat) {
+    if (!changeMode && !changeDevice && !changeOutputFormat)
         return;
+    
+    SEL targetDelegateMethodBeforeChange;
+    SEL targetDelegateMethodAfterChange;
+
+    if (changeDevice) {
+        targetDelegateMethodBeforeChange = @selector(visionCameraDeviceWillChange:);
+        targetDelegateMethodAfterChange = @selector(visionCameraDeviceDidChange:);
+    }
+    else if (changeMode) {
+        targetDelegateMethodBeforeChange = @selector(visionCameraModeWillChange:);
+        targetDelegateMethodAfterChange = @selector(visionCameraModeDidChange:);
+    }
+    else {
+        targetDelegateMethodBeforeChange = @selector(visionOutputFormatWillChange:);
+        targetDelegateMethodAfterChange = @selector(visionOutputFormatDidChange:);
     }
 
-    if (changeDevice && [_delegate respondsToSelector:@selector(visionCameraDeviceWillChange:)]) {
+    if ([_delegate respondsToSelector:targetDelegateMethodBeforeChange]) {
+        // At this point, `targetDelegateMethodBeforeChange` will always refer to a valid selector, as
+        // from the sequence of conditionals above. Also the enclosing `if` statement ensures
+        // that the delegate responds to it, thus safely ignore this compiler warning.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [_delegate performSelector:@selector(visionCameraDeviceWillChange:) withObject:self];
-#pragma clang diagnostic pop
-    }
-    if (changeMode && [_delegate respondsToSelector:@selector(visionCameraModeWillChange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [_delegate performSelector:@selector(visionCameraModeWillChange:) withObject:self];
-#pragma clang diagnostic pop
-    }
-    if (changeOutputFormat && [_delegate respondsToSelector:@selector(visionOutputFormatWillChange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [_delegate performSelector:@selector(visionOutputFormatWillChange:) withObject:self];
+        [_delegate performSelector:targetDelegateMethodBeforeChange withObject:self];
 #pragma clang diagnostic pop
     }
     
@@ -376,36 +384,22 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
     
     _cameraDevice = cameraDevice;
     _cameraMode = cameraMode;
+    
     _outputFormat = outputFormat;
-
-    PBJVisionBlock didChangeBlock = ^{
-        _flags.changingModes = NO;
-            
-        if (changeDevice && [_delegate respondsToSelector:@selector(visionCameraDeviceDidChange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [_delegate performSelector:@selector(visionCameraDeviceDidChange:) withObject:self];
-#pragma clang diagnostic pop
-        }
-        if (changeMode && [_delegate respondsToSelector:@selector(visionCameraModeDidChange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [_delegate performSelector:@selector(visionCameraModeDidChange:) withObject:self];
-#pragma clang diagnostic pop
-        }
-        if (changeOutputFormat && [_delegate respondsToSelector:@selector(visionOutputFormatDidChange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            [_delegate performSelector:@selector(visionOutputFormatDidChange:) withObject:self];
-#pragma clang diagnostic pop
-        }
-    };
-
+    
     // since there is no session in progress, set and bail
     if (!_captureSession) {
         _flags.changingModes = NO;
             
-        didChangeBlock();
+        if ([_delegate respondsToSelector:targetDelegateMethodAfterChange]) {
+            // At this point, `targetDelegateMethodAfterChange` will always refer to a valid selector, as
+            // from the sequence of conditionals above. Also the enclosing `if` statement ensures
+            // that the delegate responds to it, thus safely ignore this compiler warning.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [_delegate performSelector:targetDelegateMethodAfterChange withObject:self];
+#pragma clang diagnostic pop
+        }
         
         return;
     }
@@ -416,7 +410,19 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
 
         [self setMirroringMode:_mirroringMode];
         
-        [self _enqueueBlockOnMainQueue:didChangeBlock];
+        [self _enqueueBlockOnMainQueue:^{
+            _flags.changingModes = NO;
+            
+            if ([_delegate respondsToSelector:targetDelegateMethodAfterChange]) {
+                // At this point, `targetDelegateMethodAfterChange` will always refer to a valid selector, as
+                // from the sequence of conditionals above. Also the enclosing `if` statement ensures
+                // that the delegate responds to it, thus safely ignore this compiler warning.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [_delegate performSelector:targetDelegateMethodAfterChange withObject:self];
+#pragma clang diagnostic pop
+            }
+        }];
     }];
 }
 
@@ -723,8 +729,8 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
 
         [self setMirroringMode:PBJMirroringAuto];
 
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:[UIApplication sharedApplication]];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationDidEnterBackground:) name:UIApplicationDidEnterBackgroundNotification object:[UIApplication sharedApplication]];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationWillEnterForeground:) name:@"UIApplicationWillEnterForegroundNotification" object:[UIApplication sharedApplication]];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationDidEnterBackground:) name:@"UIApplicationDidEnterBackgroundNotification" object:[UIApplication sharedApplication]];
     }
     return self;
 }
@@ -1230,7 +1236,7 @@ typedef void (^PBJVisionBlock)();
             return;
 
         if (_previewLayer)
-            _previewLayer.connection.enabled = NO;
+            _previewLayer.connection.enabled = YES;
 
         if ([_captureSession isRunning])
             [_captureSession stopRunning];
@@ -1546,12 +1552,15 @@ typedef void (^PBJVisionBlock)();
     return thumbnail;
 }
 
-// http://sylvana.net/jpegcrop/exif_orientation.html
+
 - (UIImageOrientation)_imageOrientationFromExifOrientation:(NSInteger)exifOrientation
 {
     UIImageOrientation imageOrientation = UIImageOrientationUp;
-
+    
     switch (exifOrientation) {
+        case 1:
+            imageOrientation = UIImageOrientationUp;
+            break;
         case 2:
             imageOrientation = UIImageOrientationUpMirrored;
             break;
@@ -1573,9 +1582,7 @@ typedef void (^PBJVisionBlock)();
         case 8:
             imageOrientation = UIImageOrientationLeft;
             break;
-        case 1:
         default:
-            // UIImageOrientationUp;
             break;
     }
     
@@ -1585,9 +1592,9 @@ typedef void (^PBJVisionBlock)();
 - (void)_willCapturePhoto
 {
     DLog(@"will capture photo");
-    if ([_delegate respondsToSelector:@selector(visionWillCapturePhoto:)]) {
+    if ([_delegate respondsToSelector:@selector(visionWillCapturePhoto:)])
         [_delegate visionWillCapturePhoto:self];
-    }
+    
     if (_autoFreezePreviewDuringCapture) {
         [self freezePreview];
     }
@@ -1595,9 +1602,8 @@ typedef void (^PBJVisionBlock)();
 
 - (void)_didCapturePhoto
 {
-    if ([_delegate respondsToSelector:@selector(visionDidCapturePhoto:)]) {
+    if ([_delegate respondsToSelector:@selector(visionDidCapturePhoto:)])
         [_delegate visionDidCapturePhoto:self];
-    }
     DLog(@"did capture photo");
 }
 
@@ -1612,11 +1618,6 @@ typedef void (^PBJVisionBlock)();
     NSMutableDictionary *photoDict = [[NSMutableDictionary alloc] init];
     NSDictionary *metadata = nil;
     NSError *error = nil;
-
-    // add any attachments to propagate
-    NSDictionary *tiffDict = @{ (NSString *)kCGImagePropertyTIFFSoftware : @"PBJVision",
-                                    (NSString *)kCGImagePropertyTIFFDateTime : [NSString PBJformattedTimestampStringFromDate:[NSDate date]] };
-    CMSetAttachment(sampleBuffer, kCGImagePropertyTIFFDictionary, (__bridge CFTypeRef)(tiffDict), kCMAttachmentMode_ShouldPropagate);
 
     // add photo metadata (ie EXIF: Aperture, Brightness, Exposure, FocalLength, etc)
     metadata = (__bridge NSDictionary *)CMCopyDictionaryOfAttachments(kCFAllocatorDefault, sampleBuffer, kCMAttachmentMode_ShouldPropagate);
@@ -1682,7 +1683,9 @@ typedef void (^PBJVisionBlock)();
     AVCaptureConnection *connection = [_currentOutput connectionWithMediaType:AVMediaTypeVideo];
     [self _setOrientationForConnection:connection];
     
-    [_captureOutputPhoto captureStillImageAsynchronouslyFromConnection:connection completionHandler:^(CMSampleBufferRef imageDataSampleBuffer, NSError *error) {
+    [_captureOutputPhoto captureStillImageAsynchronouslyFromConnection:connection completionHandler:
+    ^(CMSampleBufferRef imageDataSampleBuffer, NSError *error) {
+        NSDate* completionDate = [NSDate date];
         if (!imageDataSampleBuffer) {
             DLog(@"failed to obtain image data sample buffer");
             return;
@@ -1694,11 +1697,6 @@ typedef void (^PBJVisionBlock)();
             }
             return;
         }
-        
-        // add any attachments to propagate
-        NSDictionary *tiffDict = @{ (NSString *)kCGImagePropertyTIFFSoftware : @"PBJVision",
-                                    (NSString *)kCGImagePropertyTIFFDateTime : [NSString PBJformattedTimestampStringFromDate:[NSDate date]] };
-        CMSetAttachment(imageDataSampleBuffer, kCGImagePropertyTIFFDictionary, (__bridge CFTypeRef)(tiffDict), kCMAttachmentMode_ShouldPropagate);
     
         NSMutableDictionary *photoDict = [[NSMutableDictionary alloc] init];
         NSDictionary *metadata = nil;
@@ -1706,6 +1704,7 @@ typedef void (^PBJVisionBlock)();
         // add photo metadata (ie EXIF: Aperture, Brightness, Exposure, FocalLength, etc)
         metadata = (__bridge NSDictionary *)CMCopyDictionaryOfAttachments(kCFAllocatorDefault, imageDataSampleBuffer, kCMAttachmentMode_ShouldPropagate);
         if (metadata) {
+            photoDict[PBJVisionPhotoApproximateCaptureTimeKey] = completionDate;
             photoDict[PBJVisionPhotoMetadataKey] = metadata;
             CFRelease((__bridge CFTypeRef)(metadata));
         } else {

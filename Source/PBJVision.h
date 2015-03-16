@@ -102,6 +102,7 @@ extern NSString * const PBJVisionPhotoMetadataKey;
 extern NSString * const PBJVisionPhotoJPEGKey;
 extern NSString * const PBJVisionPhotoImageKey;
 extern NSString * const PBJVisionPhotoThumbnailKey; // 160x120
+extern NSString * const PBJVisionPhotoApproximateCaptureTimeKey;
 
 // video dictionary keys
 
